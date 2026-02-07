@@ -58,7 +58,10 @@ class Config:
         """获取随机延迟秒数"""
         if self.delay_max <= 0:
             return 0
-        delay_minutes = random.randint(self.delay_min, self.delay_max)
+        # 确保 min <= max
+        actual_min = min(self.delay_min, self.delay_max)
+        actual_max = max(self.delay_min, self.delay_max)
+        delay_minutes = random.randint(actual_min, actual_max)
         return delay_minutes * 60
 
 
@@ -155,22 +158,17 @@ def click_sign_icon(driver):
         )
         print("找到签到图标，准备点击...")
         
-        # 确保元素可见和可点击
-        driver.execute_script("arguments[0].scrollIntoView(true);", sign_icon)
-        time.sleep(0.5)
+        # 确保元素可见
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", sign_icon)
+        time.sleep(1)
         
         # 打印元素信息
         print(f"签到图标元素: {sign_icon.get_attribute('outerHTML')}")
         
-        # 尝试点击
-        try:
-            
-            
-            sign_icon.click()
-            print("签到图标点击成功")
-        except Exception as click_error:
-            print(f"点击失败，尝试使用 JavaScript 点击: {str(click_error)}")
-            driver.execute_script("arguments[0].click();", sign_icon)
+        # 使用 JavaScript 点击避免遮挡问题
+        print("使用 JavaScript 点击签到图标...")
+        driver.execute_script("arguments[0].click();", sign_icon)
+        print("签到图标点击成功")
         
         print("等待页面跳转...")
         time.sleep(5)
@@ -180,9 +178,9 @@ def click_sign_icon(driver):
         
         # 点击"试试手气"按钮
         try:
-            click_button:None
+            click_button = None
             
-            if ns_random:
+            if config.ns_random:
                 click_button = WebDriverWait(driver, 5).until(
                 EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), '试试手气')]"))
             )
@@ -342,10 +340,11 @@ def nodeseek_comment(driver):
                 submit_button = WebDriverWait(driver, 30).until(
                  EC.element_to_be_clickable((By.XPATH, "//button[contains(@class, 'submit') and contains(@class, 'btn') and contains(text(), '发布评论')]"))
                 )
-                # 确保按钮可见并可点击
-                driver.execute_script("arguments[0].scrollIntoView(true);", submit_button)
+                # 确保按钮可见
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", submit_button)
                 time.sleep(0.5)
-                submit_button.click()
+                # 使用 JavaScript 点击避免遮挡问题
+                driver.execute_script("arguments[0].click();", submit_button)
                 
                 print(f"已在帖子 {post_url} 中完成评论")
                 comment_count += 1
