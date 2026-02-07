@@ -45,8 +45,10 @@ class Config:
         )
         
         # 随机延迟配置（分钟）
-        self.delay_min = int(os.environ.get("NS_DELAY_MIN", "0"))
-        self.delay_max = int(os.environ.get("NS_DELAY_MAX", "30"))
+        delay_min_str = os.environ.get("NS_DELAY_MIN", "") or "0"
+        delay_max_str = os.environ.get("NS_DELAY_MAX", "") or "30"
+        self.delay_min = int(delay_min_str)
+        self.delay_max = int(delay_max_str)
     
     @property
     def account_count(self):
