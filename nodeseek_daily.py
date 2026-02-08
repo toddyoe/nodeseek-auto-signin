@@ -173,7 +173,10 @@ def check_login_status(driver):
 def click_sign_icon(driver):
     """
     尝试点击签到图标并完成签到
-    返回: True 表示签到成功，False 表示失败或已签到
+    返回: 
+    - "success": 签到成功
+    - "already": 今日已签到
+    - "failed": 失败
     """
     try:
         print("开始查找签到图标...")
@@ -191,12 +194,11 @@ def click_sign_icon(driver):
             print("❌ 检测到 Cloudflare 拦截")
             driver.save_screenshot("cf_block_sign.png")
             send_telegram_photo("cf_block_sign.png", caption="❌ 签到时遭遇 Cloudflare 拦截")
-            return False
+            return "failed"
             
-        # 1. 检查是否被重定向回首页（说明Cookie可能失效，或者没有权限访问/board）
+        # 1. 检查是否被重定向回首页
         if "/board" not in current_url and "nodeseek.com" in current_url and len(current_url) < 30:
             print("⚠️ 似乎跳转回了首页，尝试在首页寻找签到入口...")
-            # 回退到旧逻辑：找首页的签到图标
             try:
                 sign_icon = WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.XPATH, "//span[@title='签到']"))
@@ -206,18 +208,24 @@ def click_sign_icon(driver):
                 driver.execute_script("arguments[0].click();", sign_icon)
                 print("首页签到图标点击成功")
                 time.sleep(3)
-                # 点击后通常会弹窗或跳转，这里继续往下检查状态
             except Exception as e:
                 print(f"首页签到图标未找到: {str(e)}")
         
         # 2. 尝试定位签到面板（.board-intro）
         try:
-            # 等待签到面板加载（黄色背景区域）
-            # 缩短等待时间，因为如果没加载出来，可能是已签到或者样式变了
             board_intro = WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, ".board-intro"))
             )
             print("签到面板加载成功")
+            
+            # 检查面板文本
+            intro_text = board_intro.text
+            print(f"面板文本内容: {intro_text}")
+            
+            # 优先检查是否存在"已签到"关键词
+            if "获得" in intro_text or "排名" in intro_text or "已签到" in intro_text:
+                print("✅ 检测到已签到关键词")
+                return "already"
             
             # 检查是否有按钮
             buttons = board_intro.find_elements(By.TAG_NAME, "button")
@@ -235,36 +243,14 @@ def click_sign_icon(driver):
                 driver.execute_script("arguments[0].click();", target_button)
                 print("签到按钮点击成功")
                 time.sleep(2)
-                return True
-            else:
-                print("签到面板无按钮，检查文本状态...")
-                # 检查面板文本
-                intro_text = board_intro.text
-                print(f"面板文本内容: {intro_text}")
+                return "success"
                 
-                if "获得" in intro_text or "排名" in intro_text or "已签到" in intro_text:
-                    print("✅ 检测到已签到关键词")
-                    return True
+            if "还未签到" in intro_text:
+                print("❌ 检测到'还未签到'文本，但未找到按钮")
+                return "failed"
                 
-                if "还未签到" in intro_text:
-                    print("❌ 检测到'还未签到'文本，但未找到按钮")
-                    # 尝试再次查找按钮，可能是加载延迟
-                    try:
-                        btns = board_intro.find_elements(By.TAG_NAME, "button")
-                        if btns:
-                            print(f"重试发现 {len(btns)} 个按钮，尝试点击...")
-                            btns[0].click()
-                            return True
-                    except:
-                        pass
-                    
-                # 移除单纯检查排行榜的逻辑，因为未签到也会显示排行榜
-                # if driver.find_elements(By.CSS_SELECTOR, ".board-rank"):
-                #     print("发现签到排行榜，判定为已签到")
-                #     return True
-                    
-                print("❌ 无法确认签到状态 (面板无按钮且无明确已签到文本)")
-                return False
+            print("❌ 无法确认签到状态 (面板无按钮且无明确已签到文本)")
+            return "failed"
 
         except TimeoutException:
             print("⚠️ 未找到签到面板 (.board-intro)，尝试全局文本搜索...")
@@ -273,29 +259,27 @@ def click_sign_icon(driver):
             page_text = driver.find_element(By.TAG_NAME, "body").text
             if "今日已签到" in page_text or "签到成功" in page_text or "本次获得" in page_text:
                 print("✅ 全局文本检测到 '已签到' 相关字样")
-                return True
+                return "already"
                 
             if "登录" in page_text and "注册" in page_text and "个人中心" not in page_text:
                 print("❌ 检测到页面包含'登录/注册'，可能是Cookie失效")
-                return False
+                return "failed"
 
             print("❌ 无法确认签到状态")
-            # 截图分析
             screenshot_path = "sign_intro_error.png"
             driver.save_screenshot(screenshot_path)
             send_telegram_photo(screenshot_path, caption=f"❌ 签到状态未知\nURL: {current_url}")
-            return False
+            return "failed"
             
     except Exception as e:
         print(f"签到过程中出错: {str(e)}")
         traceback.print_exc()
-        # 截图
         try:
             driver.save_screenshot("sign_exception.png")
             send_telegram_photo("sign_exception.png", caption=f"❌ 签到异常: {str(e)}")
         except:
             pass
-        return False
+        return "failed"
 
 def setup_driver_and_cookies(cookie_str):
     """
@@ -480,7 +464,7 @@ def nodeseek_comment(driver):
 def run_for_account(cookie_str, account_index):
     """为单个账号执行任务"""
     result = {
-        "sign_in": False,
+        "sign_in": "failed",
         "comments": 0,
         "error": None
     }
@@ -558,7 +542,13 @@ if __name__ == "__main__":
 
 ⏰ 执行时间: 北京时间 {beijing_time}"""
         else:
-            sign_status = "✅ 成功" if r["sign_in"] else "❌ 失败/已签到"
+            if r["sign_in"] == "success":
+                sign_status = "✅ 成功"
+            elif r["sign_in"] == "already":
+                sign_status = "🟡 已签到"
+            else:
+                sign_status = "❌ 失败"
+                
             report_message = f"""🎯 <b>NodeSeek 自动任务完成</b>
 
 📝 <b>签到状态:</b> {sign_status}
@@ -572,7 +562,12 @@ if __name__ == "__main__":
             if r["error"]:
                 lines.append(f"❌ 账号{i+1}: {r['error']}")
             else:
-                sign = "✅" if r["sign_in"] else "❌"
+                if r["sign_in"] == "success":
+                    sign = "✅"
+                elif r["sign_in"] == "already":
+                    sign = "🟡"
+                else:
+                    sign = "❌"
                 lines.append(f"👤 账号{i+1}: 签到{sign} | 评论{r['comments']}条")
         lines.append(f"\n⏰ 执行时间: 北京时间 {beijing_time}")
         report_message = "\n".join(lines)
