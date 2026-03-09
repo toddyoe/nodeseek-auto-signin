@@ -149,6 +149,18 @@ def retry(max_attempts=3, delay=5):
         return wrapper
     return decorator
 
+def _wait_for_cloudflare(driver, max_wait=30):
+    """等待 Cloudflare 验证通过"""
+    for i in range(max_wait // 3):
+        title = driver.title
+        if "Just a moment" in title or "Attention Required" in title or "Checking" in title:
+            print(f"等待 Cloudflare 验证... (已等待 {i*3} 秒)")
+            time.sleep(3)
+        else:
+            return True
+    print("Cloudflare 验证超时")
+    return False
+
 def check_login_status(driver):
     """
     检测 Cookie 是否有效（用户是否已登录）
@@ -156,17 +168,47 @@ def check_login_status(driver):
     """
     try:
         print("正在检测登录状态...")
-        # 尝试查找用户头像或用户相关元素
-        user_elements = driver.find_elements(By.CSS_SELECTOR, '.avatar, .nsk-user-avatar, [class*="avatar"]')
         
-        # 也检查是否存在登录按钮（未登录时会显示）
-        login_buttons = driver.find_elements(By.XPATH, "//span[contains(text(), '登录')]")
+        # 先检查是否卡在 Cloudflare 验证页
+        page_title = driver.title
+        print(f"当前页面标题: {page_title}")
+        
+        if "Just a moment" in page_title or "Attention" in page_title:
+            print("检测到 Cloudflare 拦截，等待验证...")
+            if not _wait_for_cloudflare(driver):
+                try:
+                    driver.save_screenshot("cf_login_check.png")
+                    send_telegram_photo("cf_login_check.png", caption="Cloudflare 拦截导致登录检测失败")
+                except:
+                    pass
+                return False
+        
+        # 方式1: 查找用户头像
+        user_elements = driver.find_elements(By.CSS_SELECTOR, '.avatar, .nsk-user-avatar, [class*="avatar"], .user-avatar, .user-info')
+        
+        # 方式2: 检查是否存在登录按钮（未登录时会显示）
+        login_buttons = driver.find_elements(By.XPATH, "//span[contains(text(), '登录')] | //a[contains(text(), '登录')]")
+        
+        # 方式3: 检查是否存在个人中心相关链接（登录后才有）
+        personal_elements = driver.find_elements(By.XPATH, "//*[contains(text(), '个人中心') or contains(text(), '消息') or contains(@href, '/user/')]")
+        
+        print(f"检测结果: 头像={len(user_elements)}, 登录按钮={len(login_buttons)}, 个人中心={len(personal_elements)}")
         
         if len(user_elements) > 0 and len(login_buttons) == 0:
-            print("✅ 登录状态有效")
+            print("登录状态有效 (通过头像检测)")
+            return True
+        elif len(personal_elements) > 0 and len(login_buttons) == 0:
+            print("登录状态有效 (通过个人中心检测)")
             return True
         else:
-            print("❌ Cookie 已过期或未登录")
+            print("Cookie 已过期或未登录")
+            try:
+                driver.save_screenshot("login_check_failed.png")
+                page_text = driver.find_element(By.TAG_NAME, "body").text[:500]
+                print(f"页面前500字: {page_text}")
+                send_telegram_photo("login_check_failed.png", caption=f"登录检测失败\n标题: {page_title}")
+            except:
+                pass
             return False
     except Exception as e:
         print(f"检测登录状态时出错: {str(e)}")
@@ -394,13 +436,16 @@ def setup_driver_and_cookies(cookie_str):
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-gpu')
         options.add_argument('--disable-software-rasterizer')
+        options.add_argument('--disable-infobars')
+        options.add_argument('--lang=zh-CN,zh')
+        options.add_argument('--disable-extensions')
         
         if config.headless:
             print("启用无头模式...")
             options.add_argument('--headless=new')
             options.add_argument('--window-size=1920,1080')
-            # 更新为较新的 User-Agent (Chrome 122)
-            options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
+            # 更新为最新 User-Agent (Chrome 131)
+            options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36')
         
         # 禁用自动化控制标记
         options.add_argument('--disable-blink-features=AutomationControlled')
@@ -443,7 +488,11 @@ def setup_driver_and_cookies(cookie_str):
         
         print("刷新页面...")
         driver.refresh()
-        time.sleep(5)  # 增加等待时间
+        time.sleep(3)
+        
+        # 等待 Cloudflare 验证通过
+        _wait_for_cloudflare(driver)
+        time.sleep(3)
         
         return driver
         
