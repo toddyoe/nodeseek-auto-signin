@@ -49,6 +49,7 @@ session=abc123xyz; token=def456uvw; user_id=12345
 | `NS_COMMENT_URL` | ❌ | 评论区域 URL（默认交易区） |
 | `TG_BOT_TOKEN` | ❌ | Telegram Bot Token |
 | `TG_CHAT_ID` | ❌ | Telegram Chat ID |
+| `NS_COMMENT` | ❌ | `true`(默认),关闭评论功能则改为false |
 
 ### Variables（非敏感配置）
 
