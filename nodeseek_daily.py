@@ -14,6 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 import random
 import time
+import shutil
 from datetime import datetime, timezone, timedelta
 import traceback
 from selenium.webdriver.common.keys import Keys
@@ -430,7 +431,7 @@ def setup_driver_and_cookies(cookie_str):
         if not cookie_str:
             print("未找到cookie配置")
             return None
-            
+
         print("开始初始化浏览器...")
         chrome_options = uc.ChromeOptions()
         chrome_options.add_argument('--no-sandbox')
@@ -440,74 +441,98 @@ def setup_driver_and_cookies(cookie_str):
         chrome_options.add_argument('--disable-infobars')
         chrome_options.add_argument('--lang=zh-CN,zh')
         chrome_options.add_argument('--window-size=1920,1080')
-        
+
         # 判断是否使用 headless 模式
         use_headless = config.headless
         if use_headless:
             print("启用无头模式...")
         else:
             print("使用 xvfb 虚拟显示器模式 (非 headless)，可绕过 Cloudflare 检测")
-        
+
         print("正在启动Chrome (undetected-chromedriver)...")
+
         # 自动检测已安装的 Chrome 主版本号，避免 ChromeDriver 版本不匹配
         chrome_major_version = None
+        chrome_binary = None
+
         try:
             import subprocess
-            result = subprocess.run(
-                ['google-chrome', '--version'],
-                capture_output=True, text=True, timeout=5
+
+            # 优先使用环境变量，其次从 PATH 里找
+            chrome_binary = (
+                os.environ.get("CHROME_BIN")
+                or shutil.which("google-chrome")
+                or shutil.which("google-chrome-stable")
             )
-            if result.returncode == 0:
-                version_str = result.stdout.strip().split()[-1]
-                chrome_major_version = int(version_str.split('.')[0])
-                print(f"检测到 Chrome 版本: {version_str} (主版本: {chrome_major_version})")
+
+            if chrome_binary:
+                chrome_binary = os.path.realpath(chrome_binary)
+                print(f"检测到 Chrome 可执行文件: {chrome_binary}")
+
+                result = subprocess.run(
+                    [chrome_binary, '--version'],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    version_str = result.stdout.strip().split()[-1]
+                    chrome_major_version = int(version_str.split('.')[0])
+                    print(f"检测到 Chrome 版本: {version_str} (主版本: {chrome_major_version})")
+            else:
+                print("未找到 Chrome 可执行文件，使用 UC 默认查找")
         except Exception as e:
             print(f"Chrome 版本检测失败: {e}，使用 UC 默认版本")
-        
+
+        uc_kwargs = {
+            "options": chrome_options,
+            "headless": use_headless,
+            "use_subprocess": True,
+            "version_main": chrome_major_version,
+        }
+
+        # 强制 UC 使用刚才检测到的那个 Chrome
+        if chrome_binary:
+            uc_kwargs["browser_executable_path"] = chrome_binary
+
         # UC 自动处理 ChromeDriver 下载、反检测补丁、webdriver 标记移除
-        driver = uc.Chrome(
-            options=chrome_options,
-            headless=use_headless,
-            use_subprocess=True,
-            version_main=chrome_major_version
-        )
-        
+        driver = uc.Chrome(**uc_kwargs)
+
         driver.set_window_size(1920, 1080)
         print("Chrome启动成功")
-        
+        print("实际 browserVersion:", driver.capabilities.get("browserVersion"))
+
         print("正在设置cookie...")
         driver.get('https://www.nodeseek.com')
-        
+
         # 等待页面加载完成
         time.sleep(5)
-        
+
         for cookie_item in cookie_str.split(';'):
             try:
                 name, value = cookie_item.strip().split('=', 1)
                 driver.add_cookie({
-                    'name': name, 
-                    'value': value, 
+                    'name': name,
+                    'value': value,
                     'domain': '.nodeseek.com',
                     'path': '/'
                 })
             except Exception as e:
                 print(f"设置cookie出错: {str(e)}")
                 continue
-        
+
         print("刷新页面...")
         driver.refresh()
         time.sleep(3)
-        
+
         # 等待 Cloudflare 验证通过
         _wait_for_cloudflare(driver)
         time.sleep(3)
-        
+
         return driver
-        
+
     except Exception as e:
         print(f"设置浏览器和Cookie时出错: {str(e)}")
         print("详细错误信息:")
-        print(traceback.format_exc())
+        traceback.print_exc()
         return None
 
 def nodeseek_comment(driver):
